@@ -1,0 +1,27 @@
+Description
+
+Perl script to read a cache channel feed and send PURGE requests to varnish.
+See http://www.mnot.net/blog/2008/01/04/cache_channels for a short
+introduction on what cache channels are.
+
+Requirements
+
+perl
+XML::Atom::Feed
+DateTime::Format::ISO8601
+HTTP::Request
+Sys::Syslog
+YAML
+
+Varnish Configuration
+
+See http://varnish.projects.linpro.no/wiki/VCLExamplePurging
+
+Installation
+
+varnish-cc      -> /usr/local/sbin/varnish-cc
+varnish-cc.init -> /etc/init.d/varnish-cc
+varnish-cc.yaml -> /etc/varnish-cc.yaml
+
+Edit /etc/varnish-cc.yaml.
+

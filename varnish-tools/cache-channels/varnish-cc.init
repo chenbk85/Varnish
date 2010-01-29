@@ -1,0 +1,75 @@
+#!/bin/bash
+#
+# init script for varnish cache control
+#
+
+if [ -e /var/run/varnish-cc ] ; then
+  PID=$(</var/run/varnish-cc)
+else
+  PID="blæh"
+fi
+
+running() {
+  [ "x$(/sbin/pidof perl)" = "x$PID" ] 
+}
+
+start() {
+  if running ; then
+    echo "$0 is already running"
+    exit 1
+  fi
+  varnish-cc &
+  PID=$!
+  echo $PID > /var/run/varnish-cc
+  exit 0
+}
+
+stop() {
+  kill $PID
+  sleep 1
+  if running ; then
+    echo "$0 just won't quit"
+    exit 1
+  else
+    rm /var/run/varnish-cc
+    exit 0
+  fi
+}
+
+status() {
+  if running ; then
+    echo "varnish-cc is running as pid $PID"
+    exit 0
+  elif [ $PID = "blæh" ] ; then
+    # exited cleanly
+    echo "trouble"
+    exit 3
+  else
+    echo "trouble"
+    exit 1
+  fi
+}
+
+case "$1" in
+  "start")
+    start
+    ;;
+  "stop")
+    stop
+    ;;
+  "restart")
+    stop
+    start
+    ;;
+  "force-reload")
+    # you don't want to
+    exit 3
+    ;;
+  "status")
+    status
+    ;;
+  *)
+    echo "usage: $0 (start|stop|restart|status)"
+esac
+exit 0
+

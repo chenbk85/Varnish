@@ -1,0 +1,84 @@
+#!/usr/bin/env perl
+#
+# cache control
+#
+
+
+use lib qw[ /root/inc ];
+
+use XML::Atom::Feed;
+use DateTime::Format::ISO8601;
+use HTTP::Request;
+use Sys::Syslog qw( :DEFAULT setlogsock);
+use YAML;
+use Data::Dumper;
+
+
+open my $fh, '<', '/etc/varnish-cc.yaml' or die "can't open config file: $!";
+my $config = YAML::LoadFile($fh);
+
+my $channel = $config->{'channel'};
+my $interval = $config->{'default_interval'}; 
+my $host = $config->{'host'};
+
+#
+#
+
+my $latest = DateTime->now(time_zone => "Europe/Oslo"); #DateTime::Format::ISO8601->parse_datetime("2006-04-13T11:23:42Z");
+my $last_entry = $latest; 
+my $cc_ns = XML::Atom::Namespace->new(dc => 'http://purl.org/syndication/cache-channel');
+my $ua = LWP::UserAgent->new;
+setlogsock('unix');
+
+sub invalidate {
+  my $e = $_[0];
+  
+  purge("http://localhost" . $e);
+
+}
+
+sub purge{
+  my $uri = $_[0];
+  my $req = HTTP::Request->new(PURGE => $uri);
+  my $response = $ua->request($req);
+  if ($response->is_error) {
+    openlog($0,'','user');
+    syslog('err', $uri . ": " . $response->status_line . "\n");
+    closelog;
+    #print STDERR $uri . ": " . $response->status_line . "\n";
+  }
+}
+
+sub get{
+  my $uri = $_[0];
+  my $req = HTTP::Request->new(GET => $uri);
+  my $response = $ua->request($req);
+  if ($response->is_error) {
+    openlog($0,'','user');
+    syslog('err', $uri . ": " . $response->status_line . "\n");
+    closelog;
+    #print STDERR $uri . ": " . $response->status_line . "\n";
+  }
+}
+
+while(1) {
+  my $feed = XML::Atom::Feed->new(URI->new($channel));
+  $interval = $feed->get($cc_ns, 'precision'); # FIXME
+  for my $entry ($feed->entries()) {
+    $t = $entry->updated();
+    $t =~ s/(?<=[+-]\d\d)(?=\d\d$)/:/;
+    my $entry_updated = DateTime::Format::ISO8601->parse_datetime($t);
+    if ($latest < $entry_updated) {
+      my $link = $entry->link->elem;
+      invalidate($link->getAttribute("href"));
+      if ($last_entry < $entry_updated) {
+        $last_entry = $entry_updated;
+      }
+    }
+  }
+  $latest = $last_entry;
+
+  sleep $interval;
+}
+
+

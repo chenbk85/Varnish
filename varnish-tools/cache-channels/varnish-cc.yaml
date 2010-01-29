@@ -1,0 +1,3 @@
+channel: http://www.example.com:8888/atomizer/event/current
+default_interval: 30
+host: localhost:9001
