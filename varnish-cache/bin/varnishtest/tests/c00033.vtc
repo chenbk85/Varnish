@@ -1,0 +1,33 @@
+# $Id$
+
+test "Test hash fallback"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl {
+  backend b1 {
+    .host = "${s1_addr}";
+    .port = "${s1_port}";
+  }
+  backend b2 {
+    .host = "${bad_ip}";
+  }
+  director foo random {
+    {.backend = b1; .weight = 1;}
+    {.backend = b2; .weight = 1000;}
+  }
+
+  sub vcl_recv {
+    set req.backend = foo;
+    return (pass);
+  }
+} -start
+
+client c1 {
+  txreq -url "/one"
+  rxresp
+  expect resp.status == 200
+} -run

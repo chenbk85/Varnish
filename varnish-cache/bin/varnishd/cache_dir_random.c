@@ -83,7 +83,7 @@ struct vdi_random {
 static struct vbe_conn *
 vdi_random_getfd(const struct director *d, struct sess *sp)
 {
-	int i, k;
+	int i, k, rand_offset;
 	struct vdi_random *vs;
 	double r, s1;
 	unsigned u = 0;
@@ -146,7 +146,7 @@ vdi_random_getfd(const struct director *d, struct sess *sp)
 		}
 	}
 
-	for (k = 0; k < vs->retries; ) {
+	for (k = 0; k < vs->retries; k++) {
 		/* Sum up the weights of healty backends */
 		s1 = 0.0;
 		for (i = 0; i < vs->nhosts; i++) {
@@ -181,7 +181,18 @@ vdi_random_getfd(const struct director *d, struct sess *sp)
 				return (vbe);
 			break;
 		}
-		k++;
+	}
+
+	//   The backend we want isn't giving us a vbe_conn.  Rather than give up,
+	// we return the first one we can find.
+	rand_offset = random() % vs->nhosts;
+	for (i = rand_offset; i < vs->nhosts + rand_offset; i++) {
+		d2 = vs->hosts[i % vs->nhosts].backend;
+		if (!VBE_Healthy_sp(sp, d2))
+			continue;
+		vbe = VBE_GetFd(d2, sp);
+		if (vbe != NULL)
+			return (vbe);
 	}
 	return (NULL);
 }
