@@ -1,8 +1,10 @@
 # $Id$
 
-test "Test hash fallback"
+test "Test random failure fallback"
 
 server s1 {
+	rxreq
+	txresp
 	rxreq
 	txresp
 } -start
@@ -15,19 +17,35 @@ varnish v1 -vcl {
   backend b2 {
     .host = "${bad_ip}";
   }
+
   director foo random {
+    .retries = 2;
     {.backend = b1; .weight = 1;}
     {.backend = b2; .weight = 1000;}
   }
+  director foo2 random {
+    .retries = 1;
+    {.backend = b1; .weight = 1;}
+    {.backend = b2; .weight = 999999;}
+  }
 
   sub vcl_recv {
-    set req.backend = foo;
+    if (req.url == "/foo") {
+      set req.backend = foo;
+    } else {
+      set req.backend = foo2;
+    }
     return (pass);
   }
 } -start
 
 client c1 {
-  txreq -url "/one"
+  txreq -url "/foo"
   rxresp
   expect resp.status == 200
+
+  txreq -url "/foo2"
+  rxresp
+  expect resp.status == 503
+
 } -run

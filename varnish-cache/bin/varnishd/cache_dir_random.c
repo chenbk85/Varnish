@@ -80,10 +80,36 @@ struct vdi_random {
 	unsigned		nhosts;
 };
 
+enum health_c {c_unknown = 0, c_unhealthy, c_healthy};
+
+static int
+vdi_random_cache_healthy(enum health_c* cache, struct sess *sp,
+		struct vdi_random *vs, int h_index) {
+	CHECK_OBJ_NOTNULL(vs, VDI_RANDOM_MAGIC);
+	AN(vs);
+	AN(cache);
+	AN(vs->nhosts >= h_index);
+
+	if (cache[h_index] == c_unknown) {
+		if (!VBE_Healthy_sp(sp, vs->hosts[h_index].backend)) {
+			cache[h_index] = c_unhealthy;
+		} else {
+			cache[h_index] = c_healthy;
+		}
+	}
+	return cache[h_index] == c_healthy;
+}
+
+#define RETURN_FREE(val, cache) \
+	do { \
+	free(cache);\
+	return (val); \
+      } while(0);
+
 static struct vbe_conn *
 vdi_random_getfd(const struct director *d, struct sess *sp)
 {
-	int i, k, rand_offset;
+	int i, k;
 	struct vdi_random *vs;
 	double r, s1;
 	unsigned u = 0;
@@ -91,6 +117,7 @@ vdi_random_getfd(const struct director *d, struct sess *sp)
 	struct director *d2;
 	struct SHA256Context ctx;
 	unsigned char sign[SHA256_LEN], *hp;
+	enum health_c *health_cache;
 
 	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 	CHECK_OBJ_NOTNULL(d, DIRECTOR_MAGIC);
@@ -118,6 +145,9 @@ vdi_random_getfd(const struct director *d, struct sess *sp)
 		hp = sp->digest;
 	}
 
+	health_cache = calloc(vs->nhosts, (sizeof *health_cache));
+	XXXAN(health_cache);
+
 	/*
 	 * If we are hashing, first try to hit our "canonical backend"
 	 * If that fails, we fall through, and select a weighted backend
@@ -137,11 +167,12 @@ vdi_random_getfd(const struct director *d, struct sess *sp)
 			if (r >= s1)
 				continue;
 			d2 = vs->hosts[i].backend;
-			if (!VBE_Healthy_sp(sp, d2))
+			if (!vdi_random_cache_healthy(health_cache, sp, vs, i))
 				break;
 			vbe = VBE_GetFd(d2, sp);
 			if (vbe != NULL)
-				return (vbe);
+				RETURN_FREE(vbe, health_cache);
+			health_cache[i] = c_unhealthy;
 			break;
 		}
 	}
@@ -150,14 +181,12 @@ vdi_random_getfd(const struct director *d, struct sess *sp)
 		/* Sum up the weights of healty backends */
 		s1 = 0.0;
 		for (i = 0; i < vs->nhosts; i++) {
-			d2 = vs->hosts[i].backend;
-			/* XXX: cache result of healty to avoid double work */
-			if (VBE_Healthy_sp(sp, d2))
+			if (vdi_random_cache_healthy(health_cache, sp, vs, i))
 				s1 += vs->hosts[i].weight;
 		}
 
 		if (s1 == 0.0)
-			return (NULL);
+			RETURN_FREE(NULL, health_cache);
 
 		if (vs->criteria != c_random) {
 			r = u / 4294967296.0;
@@ -170,32 +199,23 @@ vdi_random_getfd(const struct director *d, struct sess *sp)
 
 		s1 = 0.0;
 		for (i = 0; i < vs->nhosts; i++)  {
-			d2 = vs->hosts[i].backend;
-			if (!VBE_Healthy_sp(sp, d2))
+			if (!vdi_random_cache_healthy(health_cache, sp, vs, i))
 				continue;
 			s1 += vs->hosts[i].weight;
 			if (r >= s1)
 				continue;
+			d2 = vs->hosts[i].backend;
 			vbe = VBE_GetFd(d2, sp);
 			if (vbe != NULL)
-				return (vbe);
+				RETURN_FREE (vbe, health_cache);
+			health_cache[i] = c_unhealthy;
 			break;
 		}
 	}
 
-	//   The backend we want isn't giving us a vbe_conn.  Rather than give up,
-	// we return the first one we can find.
-	rand_offset = random() % vs->nhosts;
-	for (i = rand_offset; i < vs->nhosts + rand_offset; i++) {
-		d2 = vs->hosts[i % vs->nhosts].backend;
-		if (!VBE_Healthy_sp(sp, d2))
-			continue;
-		vbe = VBE_GetFd(d2, sp);
-		if (vbe != NULL)
-			return (vbe);
-	}
-	return (NULL);
+	RETURN_FREE (NULL, health_cache);
 }
+#undef RETURN_FREE
 
 static unsigned
 vdi_random_healthy(double now, const struct director *d, uintptr_t target)
